@@ -1,4 +1,4 @@
-## Single file header only sqlite wrapper for C++ 17
+## Single file header only sqlite wrapper for C++
 
 ## Example
 ```cpp
