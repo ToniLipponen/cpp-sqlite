@@ -375,7 +375,7 @@ namespace sqlite
         }
     public:
         template<typename T>
-        explicit operator T() const
+        operator T() const
         {
             return m_statement.Get<T>(m_columnIndex);
         }
