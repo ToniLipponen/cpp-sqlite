@@ -22,14 +22,17 @@
 
 #pragma once
 #include <sqlite3.h>
-#include <type_traits>
-#include <string_view>
-#include <string>
-#include <vector>
-#include <exception>
 #include <cstring>
 #include <cstdint>
-#include <sstream>
+#include <string>
+#include <vector>
+#include <stdexcept>
+
+#if __cplusplus > 201402L
+    #define CPP_SQLITE_NODISCARD [[nodiscard]]
+#else
+    #define CPP_SQLITE_NODISCARD
+#endif
 
 namespace sqlite
 {
@@ -75,7 +78,6 @@ namespace sqlite
 
             return true;
         }
-
     }
 
     class Connection
@@ -83,9 +85,17 @@ namespace sqlite
     public:
         Connection() : m_connection(nullptr) {}
 
-        explicit Connection(const std::string_view& filename)
+        explicit Connection(const std::string& filename)
         {
             Open(filename);
+        }
+
+        Connection(const Connection&) = delete;
+
+        Connection(Connection&& other) noexcept
+        {
+            this->m_connection = other.m_connection;
+            other.m_connection = nullptr;
         }
 
         virtual ~Connection()
@@ -93,7 +103,20 @@ namespace sqlite
             Close();
         }
 
-        bool Open(const std::string_view& filename)
+        Connection& operator=(const Connection&) = delete;
+
+        Connection& operator=(Connection&& other) noexcept
+        {
+            if(&other != this)
+            {
+                this->m_connection = other.m_connection;
+                other.m_connection = nullptr;
+            }
+
+            return *this;
+        }
+
+        bool Open(const std::string& filename)
         {
             return Priv::CheckError(sqlite3_open(filename.data(), &m_connection));
         }
@@ -106,7 +129,7 @@ namespace sqlite
             return result;
         }
 
-        [[nodiscard]]
+        CPP_SQLITE_NODISCARD
         sqlite3* GetPtr()
         {
             return m_connection;
@@ -119,10 +142,10 @@ namespace sqlite
     class Blob
     {
     public:
-        explicit Blob(const unsigned char* data, uint32_t bytes)
+        Blob(const unsigned char* data, int32_t bytes)
+        : m_data(data, data+bytes)
         {
-            m_data.resize(bytes);
-            std::memcpy(m_data.data(), data, bytes);
+            
         }
 
         explicit Blob(std::vector<unsigned char> data)
@@ -131,19 +154,19 @@ namespace sqlite
 
         }
 
-        [[nodiscard]]
+        CPP_SQLITE_NODISCARD
         uint32_t GetSize() const
         {
             return m_data.size();
         }
 
-        [[nodiscard]]
+        CPP_SQLITE_NODISCARD
         unsigned char* GetData()
         {
             return m_data.data();
         }
 
-        [[nodiscard]]
+        CPP_SQLITE_NODISCARD
         const unsigned char* GetData() const
         {
             return m_data.data();
@@ -163,7 +186,7 @@ namespace sqlite
 
         }
 
-        [[nodiscard]]
+        CPP_SQLITE_NODISCARD
         uint32_t GetSize() const
         {
             return m_bytes;
@@ -174,7 +197,7 @@ namespace sqlite
             return m_ptr;
         }
 
-        [[nodiscard]]
+        CPP_SQLITE_NODISCARD
         const void* GetData() const
         {
             return m_ptr;
@@ -207,9 +230,14 @@ namespace sqlite
             CheckError(sqlite3_bind_double(statement, index, data));
         }
 
-        inline void Append(sqlite3_stmt* statement, int index, const std::string_view& data)
+        inline void Append(sqlite3_stmt* statement, int index, const std::string& data)
         {
             CheckError(sqlite3_bind_text(statement, index, data.data(), static_cast<int>(data.size()), nullptr));
+        }
+
+        inline void Append(sqlite3_stmt* statement, int index, const char* data)
+        {
+            CheckError(sqlite3_bind_text(statement, index, data, static_cast<int>(std::strlen(data)), nullptr));
         }
 
         inline void Append(sqlite3_stmt* statement, int index, const Blob& blob)
@@ -239,7 +267,7 @@ namespace sqlite
         {
             Statement() : handle(nullptr) {}
 
-            Statement(Connection& connection, const std::string_view& command)
+            Statement(Connection& connection, const std::string& command)
             {
                 auto* db = connection.GetPtr();
 
@@ -289,7 +317,7 @@ namespace sqlite
             }
 
             template<typename T>
-            [[nodiscard]]
+            CPP_SQLITE_NODISCARD
             T Get(int) const
             {
                 throw Error("SQL error: invalid column data type");
@@ -333,7 +361,7 @@ namespace sqlite
         {
             const int size = sqlite3_column_bytes(handle, col);
 
-            return Blob(reinterpret_cast<const unsigned char*>(sqlite3_column_blob(handle, col)), size);
+            return {reinterpret_cast<const unsigned char*>(sqlite3_column_blob(handle, col)), size};
         }
     }
 
@@ -347,7 +375,7 @@ namespace sqlite
         }
     public:
         template<typename T>
-        operator T() const
+        explicit operator T() const
         {
             return m_statement.Get<T>(m_columnIndex);
         }
@@ -395,11 +423,11 @@ namespace sqlite
             return {m_statement, m_currentColumn++};
         }
 
-        friend void Statement(Connection&, const std::string_view&);
+        friend void Statement(Connection&, const std::string&);
 
         template<typename First, typename ... Args>
-        friend Result Query(Connection& connection, const std::string_view& command, const First& first, const Args... args);
-        friend Result Query(Connection& connection, const std::string_view& command);
+        friend Result Query(Connection& connection, const std::string& command, const First& first, const Args... args);
+        friend Result Query(Connection& connection, const std::string& command);
 
     private:
         Priv::Statement m_statement;
@@ -407,7 +435,7 @@ namespace sqlite
     };
 
     template<typename First, typename ... Args>
-    inline void Statement(Connection& connection, const std::string_view& command, const First& first, const Args... args)
+    inline void Statement(Connection& connection, const std::string& command, const First& first, const Args... args)
     {
         Priv::Statement statement(connection, command);
         Priv::AppendToQuery<First, Args...>(statement.handle, 1, first, args...);
@@ -415,7 +443,7 @@ namespace sqlite
         statement.Advance();
     }
 
-    inline void Statement(Connection& connection, const std::string_view& command)
+    inline void Statement(Connection& connection, const std::string& command)
     {
         Priv::Statement statement(connection, command);
 
@@ -423,8 +451,8 @@ namespace sqlite
     }
 
     template<typename First, typename ... Args>
-    [[nodiscard]]
-    inline Result Query(Connection& connection, const std::string_view& command, const First& first, const Args... args)
+    CPP_SQLITE_NODISCARD
+    inline Result Query(Connection& connection, const std::string& command, const First& first, const Args... args)
     {
         Priv::Statement statement(connection, command);
         Priv::AppendToQuery<First, Args...>(statement.handle, 1, first, args...);
@@ -432,8 +460,8 @@ namespace sqlite
         return Result(std::move(statement));
     }
 
-    [[nodiscard]]
-    inline Result Query(Connection& connection, const std::string_view& command)
+    CPP_SQLITE_NODISCARD
+    inline Result Query(Connection& connection, const std::string& command)
     {
         Priv::Statement statement(connection, command);
 
