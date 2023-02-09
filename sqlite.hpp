@@ -407,7 +407,7 @@ namespace sqlite
     };
 
     template<typename First, typename ... Args>
-    void Statement(Connection& connection, const std::string_view& command, const First& first, const Args... args)
+    inline void Statement(Connection& connection, const std::string_view& command, const First& first, const Args... args)
     {
         Priv::Statement statement(connection, command);
         Priv::AppendToQuery<First, Args...>(statement.handle, 1, first, args...);
@@ -415,7 +415,7 @@ namespace sqlite
         statement.Advance();
     }
 
-    void Statement(Connection& connection, const std::string_view& command)
+    inline void Statement(Connection& connection, const std::string_view& command)
     {
         Priv::Statement statement(connection, command);
 
@@ -424,7 +424,7 @@ namespace sqlite
 
     template<typename First, typename ... Args>
     [[nodiscard]]
-    Result Query(Connection& connection, const std::string_view& command, const First& first, const Args... args)
+    inline Result Query(Connection& connection, const std::string_view& command, const First& first, const Args... args)
     {
         Priv::Statement statement(connection, command);
         Priv::AppendToQuery<First, Args...>(statement.handle, 1, first, args...);
@@ -433,7 +433,7 @@ namespace sqlite
     }
 
     [[nodiscard]]
-    Result Query(Connection& connection, const std::string_view& command)
+    inline Result Query(Connection& connection, const std::string_view& command)
     {
         Priv::Statement statement(connection, command);
 
