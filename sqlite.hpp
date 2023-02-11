@@ -271,7 +271,7 @@ namespace sqlite
             {
                 auto* db = connection.GetPtr();
 
-                const int code = sqlite3_prepare(
+                const int code = sqlite3_prepare_v2(
                         db,
                         command.data(),
                         static_cast<int>(command.size()),
@@ -299,12 +299,13 @@ namespace sqlite
                 return *this;
             }
 
+            CPP_SQLITE_NODISCARD
             bool Advance() const
             {
                 const int code = sqlite3_step(handle);
 
                 // No more rows
-                if(code == 101)
+                if(code == SQLITE_DONE || code == SQLITE_OK)
                 {
                     return false;
                 }
@@ -440,14 +441,14 @@ namespace sqlite
         sqlite::Priv::Statement statement(connection, command);
         sqlite::Priv::AppendToQuery<First, Args...>(statement.handle, 1, first, args...);
 
-        statement.Advance();
+        (void)statement.Advance();
     }
 
     inline void Statement(sqlite::Connection& connection, const std::string& command)
     {
         sqlite::Priv::Statement statement(connection, command);
 
-        statement.Advance();
+        (void)statement.Advance();
     }
 
     template<typename First, typename ... Args>
