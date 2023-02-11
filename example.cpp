@@ -29,8 +29,8 @@ int main()
 
     try
     {
-        /// Deliberate mistake here     ↓
-        sqlite::Query(connection, "SELECCT textData FROM exampleTable WHERE intData=1234");
+        /// Deliberate mistake here           ↓
+        (void)sqlite::Query(connection, "SELECCT textData FROM exampleTable WHERE intData=1234");
     }
     catch(const sqlite::Error& e)
     {
