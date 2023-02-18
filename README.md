@@ -20,14 +20,13 @@ int main()
                       1234,
                       5.6789);
 
-    sqlite::Result res = sqlite::Query(connection, "SELECT textData, intData, floatData "
-                                                   "FROM exampleTable");
+    sqlite::Result res = sqlite::Query(connection, "SELECT * FROM exampleTable");
 
     while(res.Next())
     {
-        std::string textData = res.Get();
-        int intData = res.Get();
-        float floatData = res.Get();
+        std::string textData = res.Get(0);
+        int intData = res.Get(1);
+        float floatData = res.Get(2);
 
         std::cout << textData << " " << intData << " " << floatData << std::endl;
     }

@@ -3,30 +3,44 @@
 
 int main()
 {
+    /// Opening a new connection
     sqlite::Connection connection("example.db");
 
+    /// Executing a statement
     sqlite::Statement(connection, "CREATE TABLE IF NOT EXISTS exampleTable ("
+                                  "id INTEGER PRIMARY KEY AUTOINCREMENT, "
                                   "textData TEXT, "
                                   "intData INTEGER, "
                                   "floatData REAL)");
 
+    /// Executing a statement with parameters
     sqlite::Statement(connection,
-                      "INSERT INTO exampleTable VALUES (?, ?, ?)",
+                      "INSERT INTO exampleTable (textData, intData, floatData) VALUES (?, ?, ?)",
                       "Hello world",
                       1234,
                       5.6789);
 
-    sqlite::Result res = sqlite::Query(connection, "SELECT textData, intData, floatData FROM exampleTable");
+    /// Executing a query
+    sqlite::Result res = sqlite::Query(connection, "SELECT textData, intData, floatData "
+                                                   "FROM exampleTable");
 
+    /// Executing a query with parameters
+    sqlite::Result res2 = sqlite::Query(connection, "SELECT * "
+                                                    "FROM exampleTable "
+                                                    "WHERE id = ?",
+                                                    3);
+
+    /// Iterate through the results rows
     while(res.Next())
     {
-        std::string textData = res.Get();
-        int intData = res.Get();
-        float floatData = res.Get();
+        std::string textData = res.Get(0);
+        int intData = res.Get(1);
+        float floatData = res.Get(2);
 
         std::cout << textData << " " << intData << " " << floatData << std::endl;
     }
 
+    /// Exceptions
     try
     {
         /// Deliberate mistake here           ↓
@@ -36,6 +50,9 @@ int main()
     {
         std::cout << e.what() << std::endl;
     }
+
+    /// Copy data from connection to backup.db
+    sqlite::Backup(connection, "backup.db");
 
     return 0;
 }
