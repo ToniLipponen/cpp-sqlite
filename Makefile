@@ -5,4 +5,4 @@ install:
 	cp sqlite.hpp /usr/local/include
 
 clean:
-	rm Example
+	rm Example example.db backup.db
