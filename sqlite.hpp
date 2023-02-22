@@ -34,7 +34,7 @@
     #define CPP_SQLITE_NODISCARD
 #endif
 
-#if defined(CPP_SQLITE_NOEXCEPT)
+#if defined(CPP_SQLITE_NOTHROW)
     #define CPP_SQLITE_THROW(...) return false
 #else
     #define CPP_SQLITE_THROW(...) throw sqlite::Error(__VA_ARGS__)
@@ -113,9 +113,16 @@ namespace sqlite
             other.m_connection = nullptr;
         }
 
-        virtual ~Connection()
+        virtual ~Connection() noexcept
         {
-            Close();
+            try
+            {
+                this->Close();
+            }
+            catch(...)
+            {
+
+            }
         }
 
         Connection& operator=(const Connection&) = delete;
@@ -364,14 +371,18 @@ namespace sqlite
 
                 if(!Advance())
                 {
+#ifndef CPP_SQLITE_NOTHROW
                     throw sqlite::Error("SQL error: invalid column index");
+#endif
                 }
 
                 std::string name = sqlite3_column_name(handle, columnIndex);
 
                 if(name.empty())
                 {
+#ifndef CPP_SQLITE_NOTHROW
                     throw sqlite::Error("SQL error: failed to get column name at index " + std::to_string(columnIndex));
+#endif
                 }
 
                 Reset();
@@ -383,7 +394,7 @@ namespace sqlite
             CPP_SQLITE_NODISCARD
             T Get(int) const
             {
-                throw sqlite::Error("SQL error: invalid column data type");
+                static_assert(sizeof(T) == -1, "SQL error: invalid column data type");
             }
 
             sqlite3_stmt* handle = nullptr;
@@ -416,8 +427,8 @@ namespace sqlite
         template<>
         inline std::string Statement::Get(int col) const
         {
-            const auto bytes = sqlite3_column_text(handle, col);
-            const auto size = sqlite3_column_bytes(handle, col);
+            const unsigned char* bytes = sqlite3_column_text(handle, col);
+            const int size = sqlite3_column_bytes(handle, col);
 
             if(size == 0)
             {
@@ -430,8 +441,8 @@ namespace sqlite
         template<>
         inline sqlite::Blob Statement::Get(int col) const
         {
-            const auto bytes = sqlite3_column_blob(handle, col);
-            const auto size = sqlite3_column_bytes(handle, col);
+            const void* bytes = sqlite3_column_blob(handle, col);
+            const int size = sqlite3_column_bytes(handle, col);
 
             return {bytes, size};
         }
