@@ -9,29 +9,29 @@ int main()
 {
     sqlite::Connection connection("example.db");
 
-    sqlite::Statement(connection, "CREATE TABLE IF NOT EXISTS exampleTable ("
-                                  "textData TEXT, "
-                                  "intData INTEGER, "
-                                  "floatData REAL)");
+    connection.Statement("CREATE TABLE IF NOT EXISTS example ("
+                         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                         "textData TEXT, "
+                         "intData INTEGER, "
+                         "floatData REAL)");
 
-    sqlite::Statement(connection,
-                      "INSERT INTO exampleTable VALUES (?, ?, ?)",
-                      "Hello world",
-                      1234,
-                      5.6789);
+    connection.Statement("INSERT INTO example (textData, intData, floatData) "
+                         "VALUES (?,?,?)",
+                         "Hello world",
+                         1,
+                         1.23);
 
-    sqlite::Result res = sqlite::Query(connection, "SELECT * FROM exampleTable");
+    sqlite::Result result = connection.Query("SELECT * FROM example");
 
-    while(res.Next())
+    while(result.Next())
     {
-        std::string textData = res.Get(0);
-        int intData = res.Get(1);
-        float floatData = res.Get(2);
-
-        std::cout << textData << " " << intData << " " << floatData << std::endl;
+        std::cout
+        << result.Get<int>(0)          << " "
+        << result.Get<std::string>(1)  << " "
+        << result.Get<int>(2)          << " "
+        << result.Get<float>(3)        << std::endl;
     }
-    
+
     return 0;
 }
-
 ```

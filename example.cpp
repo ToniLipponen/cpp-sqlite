@@ -7,52 +7,45 @@ int main()
     sqlite::Connection connection("example.db");
 
     /// Executing a statement
-    sqlite::Statement(connection, "CREATE TABLE IF NOT EXISTS exampleTable ("
-                                  "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                                  "textData TEXT, "
-                                  "intData INTEGER, "
-                                  "floatData REAL)");
+    connection.Statement("CREATE TABLE IF NOT EXISTS example ("
+                         "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                         "textData TEXT, "
+                         "intData INTEGER, "
+                         "floatData REAL)");
 
     /// Executing a statement with parameters
-    sqlite::Statement(connection,
-                      "INSERT INTO exampleTable (textData, intData, floatData) VALUES (?, ?, ?)",
-                      "Hello world",
-                      1234,
-                      5.6789);
+    connection.Statement("INSERT INTO example (textData, intData, floatData) "
+                         "VALUES (?,?,?)",
+                         "Hello world",
+                         1,
+                         1.23);
 
     /// Executing a query
-    sqlite::Result res = sqlite::Query(connection, "SELECT textData, intData, floatData "
-                                                   "FROM exampleTable");
+    sqlite::Result result = connection.Query("SELECT * FROM example");
 
-    /// Executing a query with parameters
-    sqlite::Result res2 = sqlite::Query(connection, "SELECT * "
-                                                    "FROM exampleTable "
-                                                    "WHERE id = ?",
-                                                    3);
-
-    /// Iterate through the results rows
-    while(res.Next())
+    /// Iterating through the result rows
+    while(result.Next())
     {
-        std::string textData = res.Get(0);
-        int intData = res.Get(1);
-        float floatData = res.Get(2);
-
-        std::cout << textData << " " << intData << " " << floatData << std::endl;
+        std::cout
+        << result.Get<int>(0)          << " "
+        << result.Get<std::string>(1)  << " "
+        << result.Get<int>(2)          << " "
+        << result.Get<float>(3)        << std::endl;
     }
 
     /// Exceptions
     try
     {
-        /// Deliberate mistake here           ↓
-        (void)sqlite::Query(connection, "SELECCT textData FROM exampleTable WHERE intData=1234");
+        /// Deliberate mistake here  ↓
+        (void)connection.Query("SELECCT textData FROM example");
     }
     catch(const sqlite::Error& e)
     {
         std::cout << e.what() << std::endl;
     }
 
-    /// Copy data from connection to backup.db
-    sqlite::Backup(connection, "backup.db");
+    /// Copy data into backup.db
+    connection.Backup("backup.db");
 
     return 0;
 }
