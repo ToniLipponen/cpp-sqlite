@@ -424,6 +424,7 @@ namespace sqlite
     {
     public:
         using Statement::Statement;
+        friend class Connection;
 
         Result Execute()
         {
