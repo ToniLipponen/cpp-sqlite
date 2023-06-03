@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 #include <stdexcept>
+#include <cstdint>
 
 #if __cplusplus > 201402L
     #define CPP_SQLITE_NODISCARD [[nodiscard]]
@@ -363,8 +364,8 @@ namespace sqlite
             return count;
         }
 
-        CPP_SQLITE_NODISCARD
         template<typename T>
+        CPP_SQLITE_NODISCARD
         T Get(int columnIndex) const
         {
             static_assert(sizeof(T) == -1, "SQL error: invalid column data type");
