@@ -540,7 +540,7 @@ namespace sqlite
             sqlite::Query query(GetHandle(), command);
             query.Bind(first, args...);
 
-            return query.Execute();
+            return Result(query.m_handle, true);
         }
 
         CPP_SQLITE_NODISCARD
