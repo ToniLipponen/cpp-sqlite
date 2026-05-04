@@ -35,3 +35,45 @@ int main()
     return 0;
 }
 ```
+
+## Prepared statements/queries
+```cpp
+sqlite::Statement statement = connection.prepare_statement(
+    "INSERT INTO example (textData, intData, floatData)"
+    "VALUES (?,?,?)"
+);
+
+// Bind values to (?,?,?)
+statement.bind("Hello, world", 123, 1.23);
+// Execute
+statement.evaluate();
+
+// Binding new values
+statement.bind("Something else", 42, 3.14);
+statement.evaluate();
+
+sqlite::Query query = connection.prepare_query("SELECT * FROM example WHERE id = ?");
+
+query.bind(1);
+sqlite::ResultView result = query.execute();
+
+query.bind(42);
+result = query.execute();
+```
+
+## Accessing result columns
+```cpp
+sqlite::Result result = connection.query("SELECT * FROM example");
+
+// Next row
+result.next();
+
+// By column id
+int my_int = result.get<int>(2); 
+
+// By column name
+std::string my_string = result.get<std::string>("textData"); 
+
+// By column name using implicit type conversion
+float my_float = result.get_value("floatData");
+```
