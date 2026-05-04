@@ -1,5 +1,8 @@
+CXX = g++
+CXX_STD = -std=c++11
+
 all:
-	c++ -std=c++11 example.cpp -o Example -lsqlite3 -Wall -Wextra -Werror
+	$(CXX) $(CXX_STD) example.cpp -o Example -lsqlite3 -Wall -Wextra -Werror -pedantic
 
 install:
 	cp sqlite.hpp /usr/include
