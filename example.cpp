@@ -4,7 +4,8 @@
 int main()
 {
     // Opening a new connection
-    sqlite::Connection connection("example.db");
+    sqlite::Connection connection;
+    connection.open("example.db");
 
     // Executing a statement
     connection.statement("CREATE TABLE IF NOT EXISTS example ("

@@ -7,7 +7,8 @@
 
 int main()
 {
-    sqlite::Connection connection("example.db");
+    sqlite::Connection connection;
+    connection.open("example.db");
 
     connection.statement("CREATE TABLE IF NOT EXISTS example ("
                          "id INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -46,11 +47,11 @@ sqlite::Statement statement = connection.prepare_statement(
 // Bind values to (?,?,?)
 statement.bind("Hello, world", 123, 1.23);
 // Execute
-statement.evaluate();
+statement.execute();
 
 // Binding new values
 statement.bind("Something else", 42, 3.14);
-statement.evaluate();
+statement.execute();
 
 sqlite::Query query = connection.prepare_query("SELECT * FROM example WHERE id = ?");
 
