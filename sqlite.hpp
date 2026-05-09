@@ -577,7 +577,7 @@ namespace sqlite
             return static_cast<T>(std::forward<Arg>(fallback));
         }
 
-        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
+        CPP_SQLITE_CONSTEXPR14
         void reset()
         {
             if (!m_has_value)
@@ -587,12 +587,12 @@ namespace sqlite
         }
 
         template<typename... Args>
-        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
+        CPP_SQLITE_CONSTEXPR14
         void emplace(Args&&... args)
         {
             reset();
             new (&m_storage) T(std::forward<Args>(args)...);
-            m_has_value = false;
+            m_has_value = true;
         }
 
     private:
