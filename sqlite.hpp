@@ -30,7 +30,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
-#include <unordered_map>
+#include <vector>
 #include <stdexcept>
 #include <type_traits>
 #include <limits>
@@ -73,15 +73,17 @@
     #define CPP_SQLITE_NODISCARD
 #endif
 
-#if !defined(__EXCEPTIONS) && !defined(_CPPUNWIND) && !defined(CPP_SQLITE_NOTHROW)
-    #define CPP_SQLITE_NOTHROW
+#if !defined(__EXCEPTIONS) && !defined(_CPPUNWIND) && !defined(CPP_SQLITE_NO_EXCEPTIONS)
+    #define CPP_SQLITE_NO_EXCEPTIONS
 #endif
 
-#if defined(CPP_SQLITE_NOTHROW)
-    #define CPP_SQLITE_ASSERT_THROW(condition, ex, msg) if (condition) std::abort() 
+#if defined(CPP_SQLITE_NO_EXCEPTIONS)
+    #define CPP_SQLITE_THROW_MSG_OR_ABORT(condition_, exception_, msg_) if (condition_) std::abort() 
+    #define CPP_SQLITE_THROW_OR_ABORT(condition_, exception_) if (condition_) std::abort()
     #define CPP_SQLITE_THROW(...) return false
 #else
-    #define CPP_SQLITE_ASSERT_THROW(condition, ex, msg) if (condition) throw ex(msg #condition)
+    #define CPP_SQLITE_THROW_MSG_OR_ABORT(condition_, exception_, msg_) if (condition_) throw exception_(msg_ #condition_)
+    #define CPP_SQLITE_THROW_OR_ABORT(condition_, exception_) if (condition_) throw exception_()
     #define CPP_SQLITE_THROW(...) throw sqlite::Exception(__VA_ARGS__)
 #endif
 
@@ -89,6 +91,7 @@ namespace sqlite
 {
     using byte = unsigned char;
 
+    /// @brief Null type that can be used in parameter binding in statements
     struct null_t {};
 #if __cplusplus >= 201703L
     inline constexpr null_t null{};
@@ -107,6 +110,13 @@ namespace sqlite
     inline constexpr std::nullopt_t nullopt = std::nullopt;
 
 #else
+    /// @brief Partial reimplementation of std::string_view
+    /// mean to serve as a fallback for C++11 and C++14.
+    /// @attention Don't expect this to be at feature parity with the standard one.
+    /// @note 
+    /// This is only included when C++17 is not available, 
+    /// and on C++17 and up the standard string_view is used 
+    /// and aliased to sqlite::string_view.
     class string_view
     {
     public:
@@ -125,24 +135,25 @@ namespace sqlite
         static constexpr size_type npos     = size_type(-1);
     public:
         CPP_SQLITE_CONSTEXPR
-        string_view() noexcept 
-        : m_len(0), m_str(nullptr) {}
+        string_view() noexcept = default; 
+
+        CPP_SQLITE_CONSTEXPR
+        string_view(const string_view&) noexcept = default;
+
+        CPP_SQLITE_CONSTEXPR
+        string_view(string_view&&) noexcept = default;
 
         CPP_SQLITE_CONSTEXPR17
         string_view(const_pointer cstr) noexcept 
-        : m_len(traits_type::length(cstr)), m_str(cstr) {}
+        : m_str(cstr), m_len(traits_type::length(cstr)) {}
 
         CPP_SQLITE_CONSTEXPR
-        string_view(const_pointer cstr, size_type len) noexcept 
-        : m_len(len), m_str(cstr) {}
-
-        CPP_SQLITE_CONSTEXPR
-        string_view(const string_view& other) noexcept
-        : m_len(other.m_len), m_str(other.m_str) {}
+        string_view(const_pointer str, size_type len) noexcept
+        : m_str(str), m_len(len){}
 
         CPP_SQLITE_CONSTEXPR17
-        explicit string_view(const std::string& str) noexcept
-        : m_len(str.size()), m_str(str.data()) {}
+        string_view(const std::string& str) noexcept
+        : m_str(str.data()), m_len(str.size()) {}
 
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
         const_reference operator[](size_type pos) const noexcept 
@@ -151,28 +162,26 @@ namespace sqlite
             return *(m_str + pos); 
         }
 
-        CPP_SQLITE_CONSTEXPR17
-        string_view& operator=(const_pointer rhs) noexcept { *this = string_view{rhs}; return *this; }
+        CPP_SQLITE_CONSTEXPR14
+        string_view& operator=(const string_view&) noexcept = default;
 
         CPP_SQLITE_CONSTEXPR14
-        string_view& operator=(string_view rhs) noexcept 
+        string_view& operator=(string_view&&) noexcept = default;
+
+        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR17
+        bool operator==(string_view rhs) const noexcept 
+        { return rhs.m_len == m_len && compare(rhs) == 0; }
+
+        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR17
+        bool operator==(const_pointer rhs) const noexcept 
         { 
-            m_len = rhs.m_len;
-            m_str = rhs.m_str;
-            return *this; 
+            string_view rhs_sv{rhs};
+            return rhs_sv.m_len == m_len && compare(rhs_sv) == 0; 
         }
 
-        CPP_SQLITE_CONSTEXPR17
-        string_view& operator=(const std::string& rhs) noexcept { *this = string_view{rhs}; return *this; }
-
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR17
-        bool operator==(string_view rhs) const noexcept { return compare(rhs) == 0; }
-
-        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR17
-        bool operator==(const_pointer rhs) const noexcept { return compare(string_view{rhs}) == 0; }
-
-        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR17
-        bool operator==(const std::string& rhs) const noexcept { return compare(string_view{rhs}) == 0; }
+        bool operator==(const std::string& rhs) const noexcept 
+        { return rhs.size() == m_len && compare(string_view{rhs}) == 0; }
 
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR17
         bool operator<(string_view rhs) const noexcept { return compare(rhs) < 0; }
@@ -201,20 +210,29 @@ namespace sqlite
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR
         bool empty() const noexcept { return m_len == 0; }
 
-        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
-        string_view substr(size_type pos, size_type n = string_view::npos) const noexcept
+        size_type copy(char* str, size_type n, size_type pos = 0) const
         {
-            if (m_len == 0 || pos >= m_len)
-                return string_view();
-            const size_type max_len = m_len - pos;
-            const size_type len = n >= max_len ? max_len : n;
+            assert(m_len > pos);
+            CPP_SQLITE_THROW_MSG_OR_ABORT(pos > m_len, std::out_of_range, "string_view::copy: ");
+            const size_type len = std::min<size_type>(n, m_len - pos);
+            traits_type::copy(str, m_str + pos, len);
+            return len;
+        }
+
+        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
+        string_view substr(size_type pos = 0, size_type n = string_view::npos) const
+        {
+            assert(m_len > pos);
+            CPP_SQLITE_THROW_MSG_OR_ABORT(pos > m_len, std::out_of_range, "string_view::substr: ");
+            const size_type len = std::min<size_type>(n, m_len - pos);
             return string_view(m_str + pos, len);
         }
 
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
         const_reference at(size_type pos) const
         {
-            CPP_SQLITE_ASSERT_THROW(pos >= m_len, std::out_of_range, "string_view::at() ");
+            assert(m_len > pos);
+            CPP_SQLITE_THROW_MSG_OR_ABORT(pos >= m_len, std::out_of_range, "string_view::at: ");
             return m_str[pos];
         }
 
@@ -285,8 +303,8 @@ namespace sqlite
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR17
         int compare(string_view str) const noexcept
         {
-            const size_type rlen = m_len <= str.m_len ? m_len : str.m_len; 
-            int ret = traits_type::compare(m_str, str.m_str, rlen);
+            const size_type len = std::min<size_type>(m_len, str.m_len); 
+            int ret = traits_type::compare(m_str, str.m_str, len);
             if (ret == 0)
                 ret = _S_compare(m_len, str.m_len);
             return ret;
@@ -326,17 +344,15 @@ namespace sqlite
         static int _S_compare(size_type n1, size_type n2) noexcept
         {
             using limits = std::numeric_limits<int>;
-            constexpr difference_type max = static_cast<difference_type>(limits::max());
-            constexpr difference_type min = static_cast<difference_type>(limits::min());
             const difference_type diff = n1 - n2;
-            if (diff > max) return max;
-            if (diff < min) return min;
+            if (diff > limits::max()) return limits::max();
+            if (diff < limits::min()) return limits::min();
 
             return static_cast<int>(diff);
         }
     private:
-        size_type m_len;
-        const_pointer m_str;
+        const_pointer m_str = nullptr;
+        size_type m_len = 0;
     };
 
 #if defined(CPP_SQLITE_IOSTREAM) && __cplusplus < 201703L
@@ -349,7 +365,7 @@ namespace sqlite
 
     struct nullopt_t{};
 
-    static const nullopt_t nullopt{};
+    constexpr static const nullopt_t nullopt{};
 
     class bad_optional_access : public std::exception
     {
@@ -360,10 +376,20 @@ namespace sqlite
         }
     };
 
+    /// @brief Partial reimplementation of std::optional<T> 
+    /// meant to serve as a fallback for C++11 and C++14. 
+    /// @attention Don't expect this to be at feature parity with the standard one. 
+    /// @note 
+    /// This is only included when C++17 is not available, 
+    /// and on C++17 and up the standard optional<T> is used 
+    /// and aliased to sqlite::optional<T>.
+    /// @tparam T 
     template<typename T>
     class optional
     {
     public:
+        using value_type = T;
+
         CPP_SQLITE_CONSTEXPR
         optional() noexcept
         : m_has_value(false) {}
@@ -387,19 +413,22 @@ namespace sqlite
         }
 
         CPP_SQLITE_CONSTEXPR14
-        optional(const optional& other)
+        optional(const optional<T>& other)
         : m_has_value(other.m_has_value)
         {
             if (m_has_value)
-                new (&m_storage) T(*other.ptr());
+                new (&m_storage) T(other.get_value());
         }
 
         CPP_SQLITE_CONSTEXPR14
-        optional(optional&& other)
+        optional(optional<T>&& other)
         : m_has_value(other.m_has_value)
         {
             if (m_has_value)
-                new (&m_storage) T(std::move(*other.ptr()));
+            {
+                new (&m_storage) T(std::move(other.get_value()));
+                other.m_has_value = false;
+            }
         }
 
         ~optional()
@@ -413,6 +442,57 @@ namespace sqlite
             return m_has_value;
         }
 
+        optional<T>& operator=(optional<T>&& other)
+        {
+            reset();
+            if (other.m_has_value)
+            {
+                construct(other.get_value());
+                other.m_has_value = false;
+            }
+            return *this;
+        }
+
+        optional<T>& operator=(const optional<T>& other)
+        {
+            reset();
+            if (other.m_has_value)
+                construct(other.get_value());
+            return *this;
+        }
+
+        optional<T>& operator=(const T& value)
+        {
+            reset();
+            construct(value);
+            return *this;
+        }
+
+        optional<T>& operator=(T&& value)
+        {
+            reset();
+            construct(std::move(value));
+            return *this;
+        }
+
+        optional<T>& operator=(nullopt_t) noexcept
+        {
+            reset();
+            return *this;
+        }
+
+        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
+        bool operator==(nullopt_t) noexcept
+        {
+            return !m_has_value;
+        }
+
+        CPP_SQLITE_NODISCARD
+        bool operator==(const T& value) noexcept
+        {
+            return m_has_value && get_value() == value;
+        }
+
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR
         explicit operator bool() const noexcept
         {
@@ -422,63 +502,79 @@ namespace sqlite
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
         T& operator*() noexcept
         {
-            return value();
+            assert(m_has_value);
+            return get_value();
         }
 
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
         const T& operator*() const noexcept
         {
-            return value();
+            assert(m_has_value);
+            return get_value();
         }
 
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
         T* operator->() noexcept
         {
-            return ptr();
+            assert(m_has_value);
+            return get_pointer();
         }
 
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
         const T* operator->() const noexcept
         {
-            return ptr();
+            assert(m_has_value);
+            return get_pointer();
         }
 
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
-        T& value()
+        T& value() &
         {
-            if (!m_has_value)
-            {
-#ifndef CPP_SQLITE_NOTHROW
-                throw bad_optional_access();
-#else
-                std::abort();
-#endif
-            }
-
-            return *ptr();
+            assert(m_has_value);
+            CPP_SQLITE_THROW_OR_ABORT(!m_has_value, bad_optional_access);
+            return get_value();
         }
 
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
-        const T& value() const
+        const T& value() const &
         {
-            if (!m_has_value)
-            {
-#ifndef CPP_SQLITE_NOTHROW
-                throw bad_optional_access();
-#else
-                std::abort();
-#endif
-            }
-
-            return *ptr();
+            assert(m_has_value);
+            CPP_SQLITE_THROW_OR_ABORT(!m_has_value, bad_optional_access);
+            return get_value();
         }
 
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
-        T value_or(const T& fallback) const noexcept
+        T&& value() &&
+        {
+            assert(m_has_value);
+            CPP_SQLITE_THROW_OR_ABORT(!m_has_value, bad_optional_access);
+            return std::move(get_value());
+        }
+
+        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
+        const T&& value() const &&
+        {
+            assert(m_has_value);
+            CPP_SQLITE_THROW_OR_ABORT(!m_has_value, bad_optional_access);
+            return std::move(get_value());
+        }
+
+        template<typename Arg>
+        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
+        T value_or(Arg&& fallback) const &
         {
             if (m_has_value)
-                return value();
-            return fallback;
+                return get_value();
+            return static_cast<T>(std::forward<Arg>(fallback));
+        }
+
+        template<typename Arg>
+        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
+        T value_or(T&& fallback) &&
+        {
+            if (m_has_value)
+                return std::move(get_value());
+            return static_cast<T>(std::forward<Arg>(fallback));
         }
 
         CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
@@ -486,7 +582,7 @@ namespace sqlite
         {
             if (!m_has_value)
                 return;
-            ptr()->~T();
+            get_pointer()->~T();
             m_has_value = false;
         }
 
@@ -500,22 +596,47 @@ namespace sqlite
         }
 
     private:
+        void construct(const T& value)
+        {
+            new (&m_storage) T(value);
+            m_has_value = true;
+        }
+
+        void construct(T&& value)
+        {
+            new (&m_storage) T(std::move(value));
+            m_has_value = true;
+        }
+
         CPP_SQLITE_NODISCARD
-        T* ptr() noexcept
+        T* get_pointer() noexcept
         {
             return reinterpret_cast<T*>(&m_storage);
         }
 
         CPP_SQLITE_NODISCARD
-        const T* ptr() const noexcept
+        const T* get_pointer() const noexcept
         {
             return reinterpret_cast<const T*>(&m_storage);
         }
+
+        CPP_SQLITE_NODISCARD
+        T& get_value() noexcept { return *get_pointer(); }
+
+        CPP_SQLITE_NODISCARD
+        const T& get_value() const noexcept { return *get_pointer(); }
     private:
         typename std::aligned_storage<sizeof(T), alignof(T)>::type m_storage;
         bool m_has_value = false;
     };
 #endif
+
+    struct Error
+    {
+        std::int32_t code;
+        std::int32_t extended_code;
+        std::string message;
+    };
 
     struct NonCopyable
     {
@@ -548,237 +669,115 @@ namespace sqlite
 
     struct Blob
     {
+        Blob() noexcept = default;
+
         Blob(const sqlite::byte* data, std::size_t size)
-        : m_data(nullptr), m_size(size)
         {
-            if (m_size == 0)
+            if (size == 0 || data == nullptr)
                 return;
-
-            m_data = static_cast<sqlite::byte*>(std::malloc(m_size));
-
-            if (m_data == nullptr)
-            {
-#ifdef CPP_SQLITE_NOTHROW
-                std::abort();
-#else
-                throw std::bad_alloc();
-#endif
-            }
-
-            std::memcpy(m_data, data, m_size);
+            m_vector.assign(data, data + size);
         }
 
-        Blob(const Blob& other)
-        : m_data(nullptr), m_size(other.m_size)
-        {
-            if (m_size == 0)
-                return;
-            m_data = static_cast<sqlite::byte*>(std::malloc(m_size));
-            std::memcpy(m_data, other.m_data, m_size);
-        }
+        Blob(const Blob&) = default;
+        Blob(Blob&&) noexcept = default;
+        Blob& operator=(const Blob&) = default;
+        Blob& operator=(Blob&&) noexcept = default;
 
-        Blob(Blob&& other) noexcept
-        : m_data(other.m_data), m_size(other.m_size)
-        {
-            other.m_data = nullptr;
-            other.m_size = 0;
-        }
-
-        ~Blob()
-        {
-            std::free(m_data);
-        }
-
-        Blob& operator=(const Blob& other)
-        {
-            if (&other == this)
-            {
-                return *this;
-            }
-
-            if (other.m_size == 0)
-            {
-                std::free(m_data);
-                m_data = nullptr;
-                m_size = 0;
-                return *this;
-            }
-
-            void* new_data = std::realloc(m_data, other.m_size);
-
-            if (new_data == nullptr)
-            {
-#ifdef CPP_SQLITE_NOTHROW
-                std::abort();
-#else
-                throw std::bad_alloc();
-#endif
-            }
-
-            m_size = other.m_size;
-            m_data = static_cast<sqlite::byte*>(new_data);
-            std::memcpy(m_data, other.m_data, m_size);
-
-            return *this;
-        }
-
-        Blob& operator=(Blob&& other) noexcept
-        {
-            if (&other == this)
-            {
-                return *this;
-            }
-
-            std::free(m_data);
-            m_data = other.m_data;
-            m_size = other.m_size;
-            other.m_data = nullptr;
-            other.m_size = 0;
-
-            return *this;
-        }
-
-        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
+        CPP_SQLITE_NODISCARD
         bool empty() const noexcept
         {
-            return m_size == 0;
+            return m_vector.empty();
         }
 
-        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
-        std::size_t get_size() const noexcept
-        {
-            return m_size;
-        }
-
-        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
-        sqlite::byte* get_data() noexcept
-        {
-            return m_data;
-        }
-
-        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR14
-        const sqlite::byte* get_data() const noexcept
-        {
-            return m_data;
-        }
-
-        template<typename T>
         CPP_SQLITE_NODISCARD
-        T to() const
+        std::size_t size() const noexcept
         {
-            return T(m_data, m_size);
+            return m_vector.size();
+        }
+
+        CPP_SQLITE_NODISCARD
+        sqlite::byte* data() noexcept
+        {
+            return m_vector.data();
+        }
+
+        CPP_SQLITE_NODISCARD 
+        const sqlite::byte* data() const noexcept
+        {
+            return m_vector.data();
         }
 
         CPP_SQLITE_NODISCARD
         std::string to_string() const
         {
             return std::string(
-                reinterpret_cast<const char*>(m_data), 
-                m_size
+                reinterpret_cast<const char*>(m_vector.data()),
+                m_vector.size() 
             );
         }
 
         CPP_SQLITE_NODISCARD
-        sqlite::string_view to_string_view() const noexcept
+        string_view to_string_view() const noexcept
         {
-            return sqlite::string_view(
-                reinterpret_cast<const char*>(m_data), 
-                m_size
+            return string_view(
+                reinterpret_cast<const char*>(m_vector.data()), 
+                m_vector.size() 
             );
         }
+
+        CPP_SQLITE_NODISCARD
+        struct BlobView to_view() const noexcept;
     private:
-        sqlite::byte* m_data = nullptr;
-        std::size_t m_size = 0;
+        std::vector<sqlite::byte> m_vector;
     };
 
-    /** Non-owning blob*/
     struct BlobView
     {
-        BlobView() = delete;
-
         CPP_SQLITE_CONSTEXPR
+        BlobView() noexcept
+        : m_data(nullptr), m_size(0) {}
+
+        CPP_SQLITE_CONSTEXPR14
         BlobView(const sqlite::byte* data, std::size_t size) noexcept
-        : m_data(data), m_size(size)
+        : m_data(data), m_size(size) 
         {
-
+            normalize();
         }
 
         CPP_SQLITE_CONSTEXPR
-        BlobView(const BlobView& other) noexcept
-        : m_data(other.m_data), m_size(other.m_size)
-        {
+        BlobView(const BlobView&) noexcept = default;
 
+        CPP_SQLITE_CONSTEXPR14
+        BlobView(BlobView&&) noexcept = default;
+
+        BlobView(const Blob& blob) noexcept
+        : m_data(blob.data()), m_size(blob.size()) 
+        {
+            normalize();
         }
 
         CPP_SQLITE_CONSTEXPR14
-        BlobView(BlobView&& other) noexcept
-        : m_data(other.m_data), m_size(other.m_size)
-        {
-            other.m_data = nullptr;
-            other.m_size = 0;
-        }
+        BlobView& operator=(const BlobView&) noexcept = default;
 
         CPP_SQLITE_CONSTEXPR14
-        BlobView(const Blob& owning_blob) noexcept
-        : m_data(owning_blob.get_data()), m_size(owning_blob.get_size())
-        {
+        BlobView& operator=(BlobView&&) noexcept = default;
 
-        }
-
-        CPP_SQLITE_CONSTEXPR14
-        BlobView& operator=(const BlobView& other) noexcept
-        {
-            m_data = other.m_data;
-            m_size = other.m_size;
-            return *this;
-        }
-
-        CPP_SQLITE_CONSTEXPR14
-        BlobView& operator=(BlobView&& other) noexcept
-        {
-            if (&other == this)
-                return *this;
-            m_data = other.m_data;
-            m_size = other.m_size;
-            other.m_data = nullptr;
-            other.m_size = 0;
-            return *this;
-        }
-
-        CPP_SQLITE_CONSTEXPR14
-        BlobView& operator=(const Blob& owning_blob) noexcept
-        {
-            m_data = owning_blob.get_data();
-            m_size = owning_blob.get_size();
-            return *this;
-        }
-
-        CPP_SQLITE_NODISCARD
-        CPP_SQLITE_CONSTEXPR
+        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR
         std::size_t empty() const noexcept
         {
             return m_size == 0;
         }
 
-        CPP_SQLITE_NODISCARD
-        CPP_SQLITE_CONSTEXPR
-        std::size_t get_size() const noexcept
+        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR
+        std::size_t size() const noexcept
         {
             return m_size;
         }
 
-        CPP_SQLITE_NODISCARD
-        CPP_SQLITE_CONSTEXPR
-        const sqlite::byte* get_data() const noexcept
+        CPP_SQLITE_NODISCARD CPP_SQLITE_CONSTEXPR
+        const sqlite::byte* data() const noexcept
         {
             return m_data;
-        }
-
-        template<typename T>
-        CPP_SQLITE_NODISCARD
-        T to() const
-        {
-            return T(m_data, m_size);
         }
 
         CPP_SQLITE_NODISCARD
@@ -791,17 +790,39 @@ namespace sqlite
         }
 
         CPP_SQLITE_NODISCARD
-        sqlite::string_view to_string_view() const noexcept
+        string_view to_string_view() const noexcept
         {
-            return sqlite::string_view(
+            return string_view(
                 reinterpret_cast<const char*>(m_data), 
                 m_size
             );
+        }
+
+        /// Convert to data owning blob. 
+        CPP_SQLITE_NODISCARD
+        Blob to_blob() const
+        {
+            return Blob(m_data, m_size);
+        }
+    private:
+        CPP_SQLITE_CONSTEXPR14
+        void normalize() noexcept
+        {
+            if (m_size == 0)
+                m_data = nullptr;
+            else if (m_data == nullptr)
+                m_size = 0;
         }
     private:
         const sqlite::byte* m_data = nullptr;
         std::size_t m_size = 0;
     };
+
+    CPP_SQLITE_NODISCARD
+    BlobView Blob::to_view() const noexcept
+    {
+        return BlobView(m_vector.data(), m_vector.size());
+    }
 
     enum class ColumnType
     {
@@ -812,449 +833,569 @@ namespace sqlite
         Blob,
         Unknown,
     };
-    
+
+    template<typename T>
+    struct RowMapper;
+
+    template<typename T>
+    struct ParameterMapper;
+
     namespace detail
     {
-        inline bool check_error(CPP_SQLITE_UNUSED sqlite3* db, std::int32_t code)
+        inline bool check_error(sqlite3* db, std::int32_t code)
         {
-            if (code == SQLITE_OK || code == SQLITE_DONE)
+            if (code == SQLITE_OK || code == SQLITE_DONE || code == SQLITE_ROW)
                 return true;
-#ifndef CPP_SQLITE_NOTHROW
+#ifndef CPP_SQLITE_NO_EXCEPTIONS
             const std::int32_t extended_code = sqlite3_extended_errcode(db);
             std::string errstr = sqlite3_errstr(extended_code);
             std::string errmsg = sqlite3_errmsg(db);
-            throw sqlite::Exception(errstr + ": " + errmsg, extended_code);
+            throw Exception(errstr + ": " + errmsg, extended_code);
 #else
+            (void)db;
             return false;
 #endif
         }
 
         inline bool check_error(std::int32_t code)
         {
-            if (code == SQLITE_OK || code == SQLITE_DONE)
+            if (code == SQLITE_OK || code == SQLITE_DONE || code == SQLITE_ROW)
                 return true;
-#ifndef CPP_SQLITE_NOTHROW
+#ifndef CPP_SQLITE_NO_EXCEPTIONS
             std::string errstr = std::string("SQL error: ") + sqlite3_errstr(code);
-            throw sqlite::Exception(errstr, code);
+            throw Exception(errstr, code);
 #else
             return false;
 #endif
         }
     
-        struct Result
+        struct ColumnInfoCache
         {
-            struct Value : NonCopyable
+            void reset(std::int32_t count)
             {
-                Value(Result& result, std::int32_t column_index)
-                : m_result_ref(result), m_column_index(column_index)
+                column_names.clear();
+                column_names.reserve(count);
+                column_count = count;
+            }
+
+            CPP_SQLITE_NODISCARD
+            bool is_valid_column_index(std::int32_t column_index) const noexcept
+            {
+                return column_index >= 0 && column_index < column_count;
+            }
+
+            CPP_SQLITE_NODISCARD
+            std::int32_t get_column_index(string_view column_name) const noexcept
+            {
+                for (std::int32_t i = 0; i < column_count; i++)
                 {
-
+                    if (string_view(column_names[i]) == column_name)
+                        return i;
                 }
-
-                template<typename T>
-                operator T() const
-                {
-                    return m_result_ref.get<T>(m_column_index);
-                }
-
-            private:
-                Result& m_result_ref;
-                std::int32_t m_column_index;
-            };
-
-            bool reset() const
-            {
-                return sqlite::detail::check_error(sqlite3_reset(m_statement));
+                return -1;
             }
 
             CPP_SQLITE_NODISCARD
-            bool next() const
+            string_view get_column_name(std::int32_t column_index) const noexcept
             {
-                const std::int32_t code = sqlite3_step(m_statement);
-
-                if (code == SQLITE_ROW)
-                    return true;
-                if (!sqlite::detail::check_error(code))
-                    return false;
-                reset();
-                return false;
-            }
-
-            CPP_SQLITE_NODISCARD
-            std::int32_t column_count() const
-            {
-                return sqlite3_column_count(m_statement);
-            }
-
-            CPP_SQLITE_NODISCARD
-            bool is_null(std::int32_t column_index) const
-            {
-                return sqlite3_column_type(m_statement, column_index) == SQLITE_NULL;
-            }
-
-            CPP_SQLITE_NODISCARD
-            bool is_null(sqlite::string_view column_name) const
-            {
-                const std::int32_t column_index = get_column_index(column_name);
-                return is_null(column_index);
-            }
-
-            CPP_SQLITE_NODISCARD
-            Value get_value(std::int32_t column_index)
-            {
-                return Value(*this, column_index);
-            }
-
-            CPP_SQLITE_NODISCARD
-            Value get_value(sqlite::string_view column_name)
-            {
-                const std::int32_t column_index = get_column_index(column_name);
-                return Value(*this, column_index);
-            }
-
-            template<typename T>
-            CPP_SQLITE_NODISCARD
-            sqlite::optional<T> get_nullable(std::int32_t column_index) const
-            {
-                if (is_null(column_index))
+                if (column_index < 0 || column_index >= column_count)
                     return {};
-                return get<T>(column_index);
+                return column_names[column_index];
             }
-
-            template<typename T>
-            CPP_SQLITE_NODISCARD
-            sqlite::optional<T> get_nullable(sqlite::string_view column_name) const
-            {
-                const std::int32_t column_index = get_column_index(column_name);
-                if (is_null(column_index))
-                    return {};
-                return get<T>(column_index);
-            }
-
-            template<typename T>
-            CPP_SQLITE_NODISCARD
-            T get(std::int32_t column_index) const
-            {
-                (void)column_index;
-                static_assert(sizeof(T) == -1, "SQL error: invalid column data type");
-            }
-
-            template<typename T>
-            CPP_SQLITE_NODISCARD
-            T get(sqlite::string_view column_name) const
-            {
-                const std::int32_t column_index = get_column_index(column_name);
-                return get<T>(column_index); 
-            }
-
-            CPP_SQLITE_NODISCARD
-            std::int32_t get_column_index(sqlite::string_view column_name) const
-            {
-                std::string str {column_name.data(), column_name.size()};
-                const auto it = m_column_index.find(str);
-                if (it == m_column_index.end())
-                {
-                    return -1;
-                }
-                return it->second;
-            }
-
-            CPP_SQLITE_NODISCARD
-            ColumnType get_column_type(std::int32_t column_index) const
-            {
-                const std::int32_t type_int = sqlite3_column_type(m_statement, column_index);
-                switch (type_int)
-                {
-                    case SQLITE_INTEGER:
-                        return ColumnType::Integer;
-                    case SQLITE_FLOAT:
-                        return ColumnType::Real;
-                    case SQLITE_TEXT:
-                        return ColumnType::Text;
-                    case SQLITE_NULL:
-                        return ColumnType::Null;
-                    case SQLITE_BLOB:
-                        return ColumnType::Blob;
-                    default:
-                        return ColumnType::Unknown;
-                }
-                return ColumnType::Unknown;
-            }
-
-            CPP_SQLITE_NODISCARD
-            ColumnType get_column_type(sqlite::string_view column_name) const
-            {
-                const std::int32_t column_index = get_column_index(column_name);
-                return get_column_type(column_index);
-            }
-        protected:
-            sqlite3_stmt* m_statement = nullptr;
-            std::unordered_map<std::string, std::int32_t> m_column_index;
-        };
-
-        struct Prepared : NonCopyable
-        {
-            Prepared() = default;
-            Prepared(Prepared&& other) noexcept
-            : m_handle(other.m_handle)
-            {
-                other.m_handle = nullptr;
-            }
-
-            ~Prepared()
-            {
-                if (m_handle)
-                    sqlite::detail::check_error(sqlite3_finalize(m_handle));
-            }
-
-            Prepared& operator=(Prepared&& other) noexcept
-            {
-                if (&other == this)
-                    return *this;
-                m_handle = nullptr;
-                std::swap(m_handle, other.m_handle);
-                return *this;
-            }
-
-            bool reset() const
-            {
-                return sqlite::detail::check_error(sqlite3_reset(m_handle));
-            }
-
-            template<typename First, typename ... Args>
-            bool bind(const First& first, const Args&... args)
-            {
-                return reset() && expand_bind(1, first, args...);
-            }
-
-            template<typename T>
-            bool bind(std::int32_t index, const sqlite::optional<T>& data)
-            {
-                if (data.has_value())
-                    return bind(index, data.value());
-                return sqlite::detail::check_error(sqlite3_bind_null(m_handle, index));
-            }
-
-            bool bind(std::int32_t index, sqlite::null_t data)
-            {
-                (void)data;
-                return sqlite::detail::check_error(sqlite3_bind_null(m_handle, index));
-            }
-
-            bool bind(std::int32_t index, bool data)
-            {
-                return sqlite::detail::check_error(sqlite3_bind_int(m_handle, index, static_cast<std::int32_t>(data)));
-            }
-
-            bool bind(std::int32_t index, std::int32_t data)
-            {
-                return sqlite::detail::check_error(sqlite3_bind_int(m_handle, index, data));
-            }
-
-            bool bind(std::int32_t index, std::int64_t data)
-            {
-                return sqlite::detail::check_error(sqlite3_bind_int64(m_handle, index, data));
-            }
-
-            bool bind(std::int32_t index, float data)
-            {
-                return sqlite::detail::check_error(sqlite3_bind_double(m_handle, index, static_cast<double>(data)));
-            }
-
-            bool bind(std::int32_t index, double data)
-            {
-                return sqlite::detail::check_error(sqlite3_bind_double(m_handle, index, data));
-            }
-
-            bool bind(std::int32_t index, const char* data)
-            {
-                return bind(index, sqlite::string_view{data});
-            }
-
-            bool bind(std::int32_t index, sqlite::string_view data)
-            {
-                return sqlite::detail::check_error(sqlite3_bind_text(m_handle, index, data.data(), static_cast<std::int32_t>(data.size()), nullptr));
-            }
-
-            bool bind(std::int32_t index, const sqlite::Blob& blob)
-            {
-                return sqlite::detail::check_error(sqlite3_bind_blob(m_handle, index, blob.get_data(), static_cast<std::int32_t>(blob.get_size()), nullptr));
-            }
-
-            bool bind(std::int32_t index, const sqlite::BlobView& blob)
-            {
-                return sqlite::detail::check_error(sqlite3_bind_blob(m_handle, index, blob.get_data(), static_cast<std::int32_t>(blob.get_size()), nullptr));
-            }
-
-        private:
-            template<typename First, typename ... Args>
-            bool expand_bind(std::int32_t index, const First& first, const Args&... args)
-            {
-                return bind(index, first) && expand_bind(++index, args...);
-            }
-            bool expand_bind(std::int32_t)
-            {
-                return true;
-            }
-
-        protected:
-            sqlite3_stmt* m_handle = nullptr;
+            std::int32_t column_count;
+            std::vector<std::string> column_names;
         };
     }
 
-    struct Statement : sqlite::detail::Prepared
+    struct Prepared : NonCopyable
+    {
+        Prepared(Prepared&& other) noexcept
+        : m_handle(nullptr)
+        {
+            std::swap(m_handle, other.m_handle);
+            m_named_params = std::move(other.m_named_params);
+        }
+
+        ~Prepared()
+        {
+            finalize();
+            m_handle = nullptr;
+        }
+
+        Prepared& operator=(Prepared&& other) noexcept
+        {
+            if (&other == this) return *this;
+            finalize();
+            m_handle = nullptr;
+            std::swap(m_handle, other.m_handle);
+            m_named_params = std::move(other.m_named_params);
+            return *this;
+        }
+
+        bool reset(bool clear = false)
+        {
+            bool ok = true;
+            if (clear)
+                ok = clear_bindings();
+            return ok && detail::check_error(sqlite3_reset(m_handle));
+        }
+
+        bool clear_bindings()
+        {
+            return detail::check_error(sqlite3_clear_bindings(m_handle));
+        }
+
+        CPP_SQLITE_NODISCARD
+        std::int32_t get_parameter_index(string_view name) const
+        {
+            for (const auto& param : m_named_params)
+            {
+                if (param.name_view == name)
+                    return param.index;
+            }
+            return -1;
+        }
+
+        template<typename T>
+        bool bind(const T& mapped)
+        {
+            return clear_bindings() && ParameterMapper<T>::map(*this, mapped);
+        }
+        
+        template<typename First, typename ... Args>
+        bool bind_all(const First& first, const Args&... args)
+        {
+            return clear_bindings() && expand_bind(1, first, args...);
+        }
+
+        template<typename T>
+        bool bind(string_view param_name, const T& value)
+        {
+            string_view normalized = normalize_param_name(param_name);
+            if (normalized.empty())
+                return false;
+            const std::int32_t index = get_parameter_index(normalized);
+            if (index == -1)
+                return false;
+            return bind(index, value);
+        }
+
+        template<typename T>
+        bool bind(std::int32_t index, const optional<T>& data)
+        {
+            if (data.has_value())
+                return bind(index, data.value());
+            return detail::check_error(sqlite3_bind_null(m_handle, index));
+        }
+
+        bool bind(std::int32_t index, null_t)
+        {
+            return detail::check_error(sqlite3_bind_null(m_handle, index));
+        }
+        bool bind(std::int32_t index, bool data)
+        {
+            return detail::check_error(sqlite3_bind_int(m_handle, index, static_cast<std::int32_t>(data)));
+        }
+        bool bind(std::int32_t index, std::int32_t data)
+        {
+            return detail::check_error(sqlite3_bind_int(m_handle, index, data));
+        }
+        bool bind(std::int32_t index, std::int64_t data)
+        {
+            return detail::check_error(sqlite3_bind_int64(m_handle, index, data));
+        }
+        bool bind(std::int32_t index, float data)
+        {
+            return detail::check_error(sqlite3_bind_double(m_handle, index, static_cast<double>(data)));
+        }
+        bool bind(std::int32_t index, double data)
+        {
+            return detail::check_error(sqlite3_bind_double(m_handle, index, data));
+        }
+        bool bind(std::int32_t index, const char* data)
+        {
+            return bind(index, string_view{data});
+        }
+        bool bind(std::int32_t index, const std::string& data)
+        {
+            return detail::check_error(sqlite3_bind_text(m_handle, index, data.data(), static_cast<std::int32_t>(data.size()), nullptr));
+        }
+        bool bind(std::int32_t index, string_view data)
+        {
+            return detail::check_error(sqlite3_bind_text(m_handle, index, data.data(), static_cast<std::int32_t>(data.size()), nullptr));
+        }
+        bool bind(std::int32_t index, const Blob& blob)
+        {
+            return detail::check_error(sqlite3_bind_blob(m_handle, index, blob.data(), static_cast<std::int32_t>(blob.size()), nullptr));
+        }
+        bool bind(std::int32_t index, const BlobView& blob)
+        {
+            return detail::check_error(sqlite3_bind_blob(m_handle, index, blob.data(), static_cast<std::int32_t>(blob.size()), nullptr));
+        }
+    private:
+        bool finalize()
+        {
+            return detail::check_error(sqlite3_finalize(m_handle));
+        }
+        template<typename First, typename ... Args>
+        bool expand_bind(std::int32_t index, const First& first, const Args&... args)
+        {
+            return bind(index, first) && expand_bind(++index, args...);
+        }
+        bool expand_bind(std::int32_t)
+        {
+            return true;
+        }
+        string_view normalize_param_name(string_view name)
+        {
+            if (name.empty()) return name;
+            switch (name.front())
+            {
+                case ':':
+                case '@':
+                case '$':
+                    return name.substr(1);
+                default:
+                    return name;
+            }
+            return name;
+        }
+    protected:
+        Prepared(sqlite3* connection_handle, string_view sql)
+        {
+            const std::int32_t code = sqlite3_prepare_v2(
+                    connection_handle,
+                    sql.data(),
+                    static_cast<std::int32_t>(sql.size()),
+                    &m_handle,
+                    nullptr);
+
+            detail::check_error(connection_handle, code);
+
+            const std::int32_t param_count = sqlite3_bind_parameter_count(m_handle);
+            m_named_params.reserve(param_count);
+            for (std::int32_t i = 1; i <= param_count; ++i)
+            {
+                const char* param_name = sqlite3_bind_parameter_name(m_handle, i);
+                if (param_name != nullptr)
+                {
+                    ++param_name; // Trim prefix
+                    m_named_params.emplace_back(i, param_name);
+                }
+            }
+        }
+    protected:
+        sqlite3_stmt* m_handle = nullptr;
+        struct NamedParameter 
+        {
+            NamedParameter(std::int32_t index, const char* name) noexcept
+            : index(index), name(name) 
+            {
+                name_view = this->name;
+            }
+
+            std::int32_t index;
+            std::string name;
+            string_view name_view;
+        };
+        std::vector<NamedParameter> m_named_params;
+    };
+
+    struct Statement : Prepared
     {
         friend struct Connection;
 
         Statement() = delete;
 
-        Statement(Statement&& other) noexcept
-        {
-            std::swap(m_handle, other.m_handle);
-        }
-
-        Statement& operator=(Statement&& other) noexcept
-        {
-            m_handle = other.m_handle;
-            other.m_handle = nullptr;
-
-            return *this;
-        }
-
-        bool reset() const
-        {
-            return sqlite::detail::check_error(sqlite3_reset(m_handle));
-        }
-
         bool execute()
         {
-            const std::int32_t code = sqlite3_step(m_handle);
-
-            if (code == SQLITE_ROW)
-                return true;
-            if (!sqlite::detail::check_error(code))
-                return false;
-            if (!reset())
-                return false;
-            return true;
+            return reset(false) && step();
         }
-    private:
-        Statement(sqlite3* connection_handle, sqlite::string_view command)
+    protected:
+        bool step()
         {
-            const std::int32_t code = sqlite3_prepare_v2(
-                    connection_handle,
-                    command.data(),
-                    static_cast<std::int32_t>(command.size()),
-                    &m_handle,
-                    nullptr);
-
-            detail::check_error(connection_handle, code);
+            return detail::check_error(sqlite3_step(m_handle));
         }
+
+    private:
+        using Prepared::Prepared;
     };
 
-    /* Non-owning result */
-    struct ResultView : sqlite::detail::Result
+    struct ResultRow
+    {
+        struct Value : NonCopyable
+        {
+            Value(const ResultRow* row, std::int32_t column_index) noexcept
+            : m_row_ptr(row), m_column_index(column_index) {}
+
+            template<typename T>
+            operator T() const
+            {
+                return m_row_ptr->get<T>(m_column_index);
+            }
+
+            template<typename T>
+            operator optional<T>() const
+            {
+                return m_row_ptr->get_nullable<T>(m_column_index);
+            }
+
+        private:
+            const ResultRow* m_row_ptr;
+            std::int32_t m_column_index;
+        };
+
+        CPP_SQLITE_NODISCARD
+        Value operator[](std::int32_t column_index)
+        {
+            return get_value(column_index);
+        }
+
+        CPP_SQLITE_NODISCARD
+        Value operator[](string_view column_name)
+        {
+            return get_value(column_name);
+        }
+
+        template<typename T>
+        CPP_SQLITE_NODISCARD
+        T as()
+        {
+            return RowMapper<T>::map(*this);
+        }
+        
+        CPP_SQLITE_NODISCARD
+        ColumnType get_column_type(std::int32_t column_index) const noexcept
+        {
+            const std::int32_t type_int = sqlite3_column_type(m_handle, column_index);
+            switch (type_int)
+            {
+                case SQLITE_INTEGER:
+                    return ColumnType::Integer;
+                case SQLITE_FLOAT:
+                    return ColumnType::Real;
+                case SQLITE_TEXT:
+                    return ColumnType::Text;
+                case SQLITE_NULL:
+                    return ColumnType::Null;
+                case SQLITE_BLOB:
+                    return ColumnType::Blob;
+                default:
+                    return ColumnType::Unknown;
+            }
+            return ColumnType::Unknown;
+        }
+
+        CPP_SQLITE_NODISCARD
+        ColumnType get_column_type(string_view column_name) const
+        {
+            const std::int32_t column_index = m_column_info_ptr->get_column_index(column_name);
+            return get_column_type(column_index);
+        }
+
+        CPP_SQLITE_NODISCARD
+        bool is_null(std::int32_t column_index) const
+        {
+            return get_column_type(column_index) == ColumnType::Null;
+        }
+
+        CPP_SQLITE_NODISCARD
+        bool is_null(string_view column_name) const
+        {
+            const std::int32_t column_index = m_column_info_ptr->get_column_index(column_name);
+            return is_null(column_index);
+        }
+
+        CPP_SQLITE_NODISCARD
+        Value get_value(std::int32_t column_index) const
+        {
+            return Value(this, column_index);
+        }
+
+        CPP_SQLITE_NODISCARD
+        Value get_value(string_view column_name) const
+        {
+            const std::int32_t column_index = m_column_info_ptr->get_column_index(column_name);
+            return Value(this, column_index);
+        }
+
+        template<typename T>
+        CPP_SQLITE_NODISCARD
+        optional<T> get_nullable(std::int32_t column_index) const
+        {
+            if (is_null(column_index) || !m_column_info_ptr->is_valid_column_index(column_index))
+                return nullopt;
+            return get<T>(column_index);
+        }
+
+        template<typename T>
+        CPP_SQLITE_NODISCARD
+        optional<T> get_nullable(string_view column_name) const
+        {
+            const std::int32_t column_index = m_column_info_ptr->get_column_index(column_name);
+            return get_nullable<T>(column_index);
+        }
+
+        template<typename T>
+        CPP_SQLITE_NODISCARD
+        T get(string_view column_name) const
+        {
+            const std::int32_t column_index = m_column_info_ptr->get_column_index(column_name);
+            return get<T>(column_index); 
+        }
+
+        template<typename T>
+        CPP_SQLITE_NODISCARD
+        T get(std::int32_t column_index) const
+        {
+            (void)column_index;
+            static_assert(sizeof(T) == -1, "SQL error: invalid column data type");
+        }
+    private:
+        ResultRow(sqlite3_stmt* statement_handle, detail::ColumnInfoCache* column_info_ptr) noexcept
+        : m_handle(statement_handle), m_column_info_ptr(column_info_ptr)
+        {
+
+        }
+    protected:
+        friend struct ResultView;
+        friend struct Result;
+        sqlite3_stmt* m_handle;
+        detail::ColumnInfoCache* m_column_info_ptr;
+    };
+
+    struct ResultView
     {
         friend struct Query;
-        friend struct Connection;
-
-        ResultView() = delete;
 
         ResultView(const ResultView& other) = default;
+        ResultView(ResultView&& other) = default;
 
         ~ResultView() = default;
 
         ResultView& operator=(const ResultView& other) = default;
+        ResultView& operator=(ResultView& other) = default;
 
-    private:
-        explicit ResultView(sqlite3_stmt* statement)
+        CPP_SQLITE_NODISCARD
+        ResultRow get_row() noexcept
         {
-            m_statement = statement;
-            const std::int32_t column_count = sqlite3_column_count(m_statement);
+            return ResultRow(m_handle, &m_column_info);
+        }
 
-            for (std::int32_t i = 0; i < column_count; ++i)
+        template<typename T>
+        CPP_SQLITE_NODISCARD
+        T get_row_as()
+        {
+            ResultRow row = get_row();
+            return row.as<T>();
+        }
+
+        CPP_SQLITE_NODISCARD
+        bool next()
+        {
+            if (m_error_code != 0)
+                return false;
+            const std::int32_t code = sqlite3_step(m_handle);
+            if (code == SQLITE_ROW)
+                return true;
+            if (code == SQLITE_DONE || SQLITE_OK)
+                return false;
+            if (m_error_code == 0)
+                m_error_code = code;
+            return false;
+        }
+
+        CPP_SQLITE_NODISCARD
+        std::int32_t column_count() const
+        {
+            return m_column_info.column_count;
+        }
+
+        CPP_SQLITE_NODISCARD
+        bool has_error() const
+        {
+            return m_error_code != 0;
+        }
+
+        CPP_SQLITE_NODISCARD
+        optional<Error> get_error() const
+        {
+            if (m_error_code == 0)
+                return nullopt;
+            Error error;
+            error.code = m_error_code;
+            error.message = sqlite3_errstr(error.code);
+            return error;
+        }
+
+    protected:
+        ResultView(){}
+        void cache_column_names()
+        {
+            const std::int32_t column_count = sqlite3_column_count(m_handle);
+            m_column_info.reset(column_count);
+
+            for (std::int32_t i = 0; i < column_count; i++)
             {
-                m_column_index.emplace(
-                    sqlite3_column_name(m_statement, i),
-                    i
+                m_column_info.column_names.emplace_back(
+                    sqlite3_column_name(m_handle, i)
                 );
             }
         }
+        sqlite3_stmt* m_handle = nullptr;
+        detail::ColumnInfoCache m_column_info;
+        std::int32_t m_error_code = 0;
+    private:
+        explicit ResultView(sqlite3_stmt* statement_handle)
+        : m_handle(statement_handle)
+        {
+            cache_column_names();
+        }
     };
 
-    struct Result : sqlite::detail::Result, NonCopyable
+    struct Result : ResultView 
     {
-        friend struct Query;
         friend struct Connection;
 
         Result() = delete;
 
-        Result(Result&& other) noexcept
-        {
-            std::swap(m_statement, other.m_statement);
-        }
-
-        Result& operator=(Result&& other)
-        {
-            m_statement = other.m_statement;
-            other.m_statement = nullptr;
-            return *this;
-        }
-
         ~Result()
         {
-            if (m_statement)
+            if (m_handle)
             {
-                detail::check_error(sqlite3_finalize(m_statement));
-                m_statement = nullptr;
+                detail::check_error(sqlite3_finalize(m_handle));
+                m_handle = nullptr;
             }
         }
+
     private:
         explicit Result(sqlite3_stmt*& statement)
         {
-            std::swap(m_statement, statement);
-            const std::int32_t column_count = sqlite3_column_count(m_statement);
-
-            for (std::int32_t i = 0; i < column_count; ++i)
-            {
-                m_column_index.emplace(
-                    sqlite3_column_name(m_statement, i),
-                    i
-                );
-            }
+            std::swap(m_handle, statement);
+            cache_column_names();
         }
     };
 
-    struct Query : sqlite::detail::Prepared 
+    struct Query : Prepared 
     {
         friend struct Connection;
 
-        ResultView execute()
+        ResultView get_result()
         {
             return ResultView(m_handle);
         }
     private:
-        Query(sqlite3* connection_handle, sqlite::string_view command)
-        {
-            const std::int32_t code = sqlite3_prepare_v2(
-                    connection_handle,
-                    command.data(),
-                    static_cast<std::int32_t>(command.size()),
-                    &m_handle,
-                    nullptr);
-
-            detail::check_error(connection_handle, code);
-        }
+        using Prepared::Prepared;
     };
 
     struct Connection : NonCopyable
     {
-        Connection() : m_handle(nullptr) {}
+        Connection() = default;
 
         Connection(Connection&& other) noexcept
+        : m_handle(nullptr)
         {
-            this->m_handle = other.m_handle;
-            other.m_handle = nullptr;
+            std::swap(m_handle, other.m_handle);
         }
 
         ~Connection()
@@ -1264,16 +1405,15 @@ namespace sqlite
 
         Connection& operator=(Connection&& other) noexcept
         {
-            if(&other != this)
+            if (&other != this)
             {
-                this->m_handle = other.m_handle;
-                other.m_handle = nullptr;
+                close();
+                std::swap(m_handle, other.m_handle);
             }
-
             return *this;
         }
 
-        bool backup(sqlite::string_view path) const
+        bool backup(string_view path) const
         {
             Connection connection;
             if (!connection.open(path))
@@ -1286,111 +1426,93 @@ namespace sqlite
             if (&backup == this)
                 CPP_SQLITE_THROW("Connection::backup(Connection& backup) backup connection cannot be the same as the source connection");
 
-            sqlite3_backup* backupHandle = sqlite3_backup_init(backup.get_handle(),
+            sqlite3* connection_handle = backup.get_handle();
+            sqlite3_backup* backup_handle = sqlite3_backup_init(connection_handle,
                                                                "main",
-                                                               get_handle(),
+                                                               m_handle,
                                                                "main");
-            if(!backupHandle)
+            if(!backup_handle)
                 CPP_SQLITE_THROW("SQL error: Failed to initialize backup");
 
-            if(!sqlite::detail::check_error(sqlite3_backup_step(backupHandle, -1)))
+            if(!detail::check_error(sqlite3_backup_step(backup_handle, -1)))
                 CPP_SQLITE_THROW("SQL error: Could not execute backup");
 
-            if(!sqlite::detail::check_error(get_handle(), sqlite3_backup_finish(backupHandle)))
+            if(!detail::check_error(connection_handle, sqlite3_backup_finish(backup_handle)))
                 CPP_SQLITE_THROW("SQL error: Could not finish backup");
 
             return true;
         }
 
-        bool statement(sqlite::string_view command) const
+        bool statement(string_view sql) const
         {
-            sqlite::Statement statement(get_handle(), command);
-
+            Statement statement(get_handle(), sql);
             return statement.execute();
         }
 
         template<typename First, typename ... Args>
-        bool statement(sqlite::string_view command, const First& first, const Args&... args)
+        bool statement(string_view sql, const First& first, const Args&... args)
         {
-            sqlite::Statement statement(get_handle(), command);
+            Statement statement(get_handle(), sql);
             statement.bind(first, args...);
-
             return statement.execute();
         }
 
         CPP_SQLITE_NODISCARD
-        Result query(sqlite::string_view command) const
+        Result query(string_view sql) const
         {
-            sqlite::Query query(get_handle(), command);
-
+            Query query(get_handle(), sql);
             return Result(query.m_handle);
         }
 
         template<typename First, typename ... Args>
         CPP_SQLITE_NODISCARD
-        Result query(sqlite::string_view command, const First& first, const Args&... args) const
+        Result query(string_view sql, const First& first, const Args&... args) const
         {
-            sqlite::Query query(get_handle(), command);
+            Query query(get_handle(), sql);
             query.bind(first, args...);
 
             return Result(query.m_handle);
         }
 
         CPP_SQLITE_NODISCARD
-        sqlite::Statement prepare_statement(sqlite::string_view command) const
+        Statement prepare_statement(string_view sql) const
         {
-            return sqlite::Statement(get_handle(), command);
+            return Statement(get_handle(), sql);
         }
 
         CPP_SQLITE_NODISCARD
-        sqlite::Query prepare_query(sqlite::string_view command) const
+        Query prepare_query(string_view sql) const
         {
-            return sqlite::Query(get_handle(), command);
+            return Query(get_handle(), sql);
         }
 
-        bool open(sqlite::string_view path)
+        bool open(string_view path)
         {
-            return sqlite::detail::check_error(sqlite3_open(path.data(), &m_handle));
+            return detail::check_error(sqlite3_open(path.data(), &m_handle));
         }
 
         bool close()
         {
             if (m_handle == nullptr)
                 return true;
-
             const auto result = detail::check_error(sqlite3_close(m_handle));
-            m_handle = nullptr;
-
+            if (result == true)
+                m_handle = nullptr;
             return result;
         }
 
         CPP_SQLITE_NODISCARD
-        std::int32_t get_error_code() const
+        optional<Error> get_error() const noexcept
         {
-            return sqlite3_errcode(m_handle);
-        }
-
-        CPP_SQLITE_NODISCARD
-        std::int32_t get_extended_error_code() const
-        {
-            return sqlite3_extended_errcode(m_handle);
-        }
-
-        /// Returns the last error message. 
-        CPP_SQLITE_NODISCARD
-        std::string get_error_message() const
-        {
-            std::int32_t code = get_error_code();
-            if(code == SQLITE_OK || code == SQLITE_DONE)
-            {
-                return "";
-            }
-
-            const std::int32_t extended_code = get_extended_error_code();
-            std::string errstr = sqlite3_errstr(extended_code);
+            Error error{};
+            error.code = sqlite3_errcode(m_handle);
+            if(error.code == SQLITE_OK || error.code == SQLITE_DONE || error.code == SQLITE_ROW)
+                return nullopt;
+            error.extended_code = sqlite3_extended_errcode(m_handle);
+            std::string errstr = sqlite3_errstr(error.extended_code);
             std::string errmsg = sqlite3_errmsg(m_handle);
-
-            return errstr + ": " + errmsg;
+            error.message = errstr + errmsg;
+            return error;
         }
 
         CPP_SQLITE_NODISCARD
@@ -1403,96 +1525,84 @@ namespace sqlite
         sqlite3* m_handle = nullptr;
     };
 
-
     template<>
-    inline bool sqlite::detail::Result::get(std::int32_t col) const
+    CPP_SQLITE_NODISCARD
+    inline bool ResultRow::get(std::int32_t col) const
     {
-        return sqlite3_column_int(m_statement, col) != 0;
+        return sqlite3_column_int(m_handle, col) != 0;
     }
 
     template<>
-    inline float sqlite::detail::Result::get(std::int32_t col) const
+    CPP_SQLITE_NODISCARD
+    inline float ResultRow::get(std::int32_t col) const
     {
-        return static_cast<float>(sqlite3_column_double(m_statement, col));
+        return static_cast<float>(sqlite3_column_double(m_handle, col));
     }
 
     template<>
-    inline double sqlite::detail::Result::get(std::int32_t col) const
+    CPP_SQLITE_NODISCARD
+    inline double ResultRow::get(std::int32_t col) const
     {
-        return sqlite3_column_double(m_statement, col);
+        return sqlite3_column_double(m_handle, col);
     }
 
     template<>
-    inline std::int32_t sqlite::detail::Result::get(std::int32_t col) const
+    CPP_SQLITE_NODISCARD
+    inline std::int32_t ResultRow::get(std::int32_t col) const
     {
-        return sqlite3_column_int(m_statement, col);
+        return sqlite3_column_int(m_handle, col);
     }
 
     template<>
-    inline std::int64_t sqlite::detail::Result::get(std::int32_t col) const
+    CPP_SQLITE_NODISCARD
+    inline std::int64_t ResultRow::get(std::int32_t col) const
     {
-        return sqlite3_column_int64(m_statement, col);
+        return sqlite3_column_int64(m_handle, col);
     }
 
     template<>
-    inline std::string sqlite::detail::Result::get(std::int32_t col) const
+    CPP_SQLITE_NODISCARD
+    inline std::string ResultRow::get(std::int32_t col) const
     {
-        const char* bytes = reinterpret_cast<const char*>(sqlite3_column_text(m_statement, col));
-
-        const std::size_t size = static_cast<std::size_t>(
-            sqlite3_column_bytes(m_statement, col)
-        );
-
-        if(size == 0)
-        {
-            return "";
-        }
-
-        return std::string(bytes, size);
-    }
-
-    template<>
-    inline sqlite::string_view sqlite::detail::Result::get(std::int32_t col) const
-    {
-        const char* bytes = reinterpret_cast<const char*>(sqlite3_column_text(m_statement, col));
-
-        const std::size_t size = static_cast<std::size_t>(
-            sqlite3_column_bytes(m_statement, col)
-        );
-
-        if(size == 0)
-        {
+        const unsigned char* text = sqlite3_column_text(m_handle, col);
+        if (text == nullptr)
             return {};
-        }
-
-        return sqlite::string_view{bytes, size};
+        const std::size_t size = static_cast<std::size_t>(sqlite3_column_bytes(m_handle, col));
+        return {reinterpret_cast<const char*>(text), size};
     }
 
     template<>
-    inline sqlite::Blob sqlite::detail::Result::get(std::int32_t col) const
+    CPP_SQLITE_NODISCARD
+    inline string_view ResultRow::get(std::int32_t col) const
     {
-        const sqlite::byte* bytes = static_cast<const sqlite::byte*>(
-            sqlite3_column_blob(m_statement, col)
-        );
-
-        const std::size_t size = static_cast<std::size_t>(
-            sqlite3_column_bytes(m_statement, col)
-        );
-
-        return sqlite::Blob(bytes, size);
+        const unsigned char* text = sqlite3_column_text(m_handle, col);
+        if (text == nullptr)
+            return {};
+        const std::size_t size = static_cast<std::size_t>(sqlite3_column_bytes(m_handle, col));
+        return {reinterpret_cast<const char*>(text), size};
     }
 
     template<>
-    inline sqlite::BlobView sqlite::detail::Result::get(std::int32_t col) const
+    CPP_SQLITE_NODISCARD
+    inline Blob ResultRow::get(std::int32_t col) const
+    {
+        const void* bytes = sqlite3_column_blob(m_handle, col);
+        const std::int32_t size = sqlite3_column_bytes(m_handle, col);
+        if (bytes == nullptr || size <= 0)
+            return {};
+        return {static_cast<const sqlite::byte*>(bytes), static_cast<std::size_t>(size)};
+    }
+
+    template<>
+    CPP_SQLITE_NODISCARD
+    inline BlobView ResultRow::get(std::int32_t col) const
     {
         const sqlite::byte* bytes = static_cast<const sqlite::byte*>(
-            sqlite3_column_blob(m_statement, col)
+            sqlite3_column_blob(m_handle, col)
         );
-
         const std::size_t size = static_cast<std::size_t>(
-            sqlite3_column_bytes(m_statement, col)
+            sqlite3_column_bytes(m_handle, col)
         );
-
-        return sqlite::BlobView(bytes, size);
+        return {bytes, size};
     }
 }
