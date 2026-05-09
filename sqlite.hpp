@@ -390,11 +390,8 @@ namespace sqlite
     public:
         using value_type = T;
 
-        CPP_SQLITE_CONSTEXPR
-        optional() noexcept
-        : m_has_value(false) {}
+        optional() noexcept = default;
 
-        CPP_SQLITE_CONSTEXPR14
         optional(nullopt_t) noexcept
         : m_has_value(false) {}
 
@@ -907,6 +904,12 @@ namespace sqlite
         };
     }
 
+    enum class BindingMode
+    {
+        Transient,
+        Static,
+    };
+
     struct Prepared : NonCopyable
     {
         Prepared(Prepared&& other) noexcept
@@ -954,6 +957,16 @@ namespace sqlite
                     return param.index;
             }
             return -1;
+        }
+
+        void set_binding_mode(BindingMode mode) noexcept
+        {
+            m_bind_mode = mode;
+        }
+
+        BindingMode get_binding_mode() const noexcept
+        {
+            return m_bind_mode;
         }
 
         template<typename T>
@@ -1014,23 +1027,53 @@ namespace sqlite
         }
         bool bind(std::int32_t index, const char* data)
         {
+            if (data == nullptr)
+                return bind(index, sqlite::null);
             return bind(index, string_view{data});
         }
         bool bind(std::int32_t index, const std::string& data)
         {
-            return detail::check_error(sqlite3_bind_text(m_handle, index, data.data(), static_cast<std::int32_t>(data.size()), nullptr));
+            return detail::check_error(
+                sqlite3_bind_text(
+                    m_handle, 
+                    index, 
+                    data.data(), 
+                    static_cast<std::int32_t>(data.size()), 
+                    m_bind_mode == BindingMode::Transient ? SQLITE_TRANSIENT : SQLITE_STATIC)
+            );
         }
         bool bind(std::int32_t index, string_view data)
         {
-            return detail::check_error(sqlite3_bind_text(m_handle, index, data.data(), static_cast<std::int32_t>(data.size()), nullptr));
+            return detail::check_error(
+                sqlite3_bind_text(
+                    m_handle, 
+                    index, 
+                    data.data(), 
+                    static_cast<std::int32_t>(data.size()), 
+                    m_bind_mode == BindingMode::Transient ? SQLITE_TRANSIENT : SQLITE_STATIC)
+            );
         }
         bool bind(std::int32_t index, const Blob& blob)
         {
-            return detail::check_error(sqlite3_bind_blob(m_handle, index, blob.data(), static_cast<std::int32_t>(blob.size()), nullptr));
+            return detail::check_error(
+                sqlite3_bind_blob(
+                    m_handle, 
+                    index, 
+                    blob.data(), 
+                    static_cast<std::int32_t>(blob.size()), 
+                    m_bind_mode == BindingMode::Transient ? SQLITE_TRANSIENT : SQLITE_STATIC)
+            );
         }
-        bool bind(std::int32_t index, const BlobView& blob)
+        bool bind(std::int32_t index, BlobView blob)
         {
-            return detail::check_error(sqlite3_bind_blob(m_handle, index, blob.data(), static_cast<std::int32_t>(blob.size()), nullptr));
+            return detail::check_error(
+                sqlite3_bind_blob(
+                    m_handle, 
+                    index, 
+                    blob.data(), 
+                    static_cast<std::int32_t>(blob.size()), 
+                    m_bind_mode == BindingMode::Transient ? SQLITE_TRANSIENT : SQLITE_STATIC)
+            );
         }
     private:
         bool finalize()
@@ -1086,6 +1129,7 @@ namespace sqlite
         }
     protected:
         sqlite3_stmt* m_handle = nullptr;
+        BindingMode m_bind_mode = BindingMode::Transient;
         struct NamedParameter 
         {
             NamedParameter(std::int32_t index, const char* name) noexcept
